@@ -17,7 +17,7 @@ import {
   logTypingFailure,
   type ReplyPayload,
 } from 'openclaw/plugin-sdk';
-import { getLarkAccount } from '../core/accounts';
+import { createAccountScopedConfig, getLarkAccount } from '../core/accounts';
 import { resolveFooterConfig } from '../core/footer-config';
 import { LarkClient } from '../core/lark-client';
 import { larkLogger } from '../core/lark-logger';
@@ -44,6 +44,7 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
   // Resolve account so we can read per-account config (e.g. replyMode)
   const account = getLarkAccount(cfg, accountId);
   const feishuCfg = account.config;
+  const accountScopedCfg = createAccountScopedConfig(cfg, account.accountId);
 
   const prefixContext = createReplyPrefixContext({ cfg, agentId });
 
@@ -72,7 +73,7 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
   const textChunkLimit = core.channel.text.resolveTextChunkLimit(cfg, 'feishu', accountId, { fallbackLimit: 4000 });
   const chunkMode = core.channel.text.resolveChunkMode(cfg, 'feishu');
   const tableMode = core.channel.text.resolveMarkdownTableMode({
-    cfg,
+    cfg: accountScopedCfg,
     channel: 'feishu',
   });
 

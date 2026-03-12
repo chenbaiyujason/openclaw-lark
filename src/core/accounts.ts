@@ -156,6 +156,31 @@ export function getLarkAccount(cfg: ClawdbotConfig, accountId?: string | null): 
   };
 }
 
+/**
+ * Build an account-scoped config view for downstream helpers that read from
+ * `cfg.channels.feishu`.
+ *
+ * In multi-account mode, many runtime helpers expect the merged account config
+ * to already be exposed at `cfg.channels.feishu`. This mirrors the inbound
+ * path behavior so outbound/tooling code resolves per-account settings
+ * consistently.
+ *
+ * @param cfg - Original top-level plugin config
+ * @param accountId - Optional target account ID
+ * @returns Config with `channels.feishu` replaced by the merged account config
+ */
+export function createAccountScopedConfig(cfg: ClawdbotConfig, accountId?: string | null): ClawdbotConfig {
+  const account = getLarkAccount(cfg, accountId);
+
+  return {
+    ...cfg,
+    channels: {
+      ...cfg.channels,
+      feishu: account.config,
+    },
+  };
+}
+
 /** Return all accounts that are both configured and enabled. */
 export function getEnabledLarkAccounts(cfg: ClawdbotConfig): LarkAccount[] {
   const ids = getLarkAccountIds(cfg);

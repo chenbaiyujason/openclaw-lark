@@ -13,9 +13,159 @@
  * 全部以用户身份（user_access_token）调用，scope 来自 real-scope.json。
  */
 
-import type { OpenClawPluginApi } from 'openclaw/plugin-sdk';
+import type { ClawdbotConfig, OpenClawPluginApi } from 'openclaw/plugin-sdk';
 import { Type } from '@sinclair/typebox';
+import { createAccountScopedConfig } from '../../../core/accounts';
+import { LarkClient } from '../../../core/lark-client';
 import { json, createToolContext, assertLarkOk, handleInvokeErrorWithAutoAuth } from '../helpers';
+
+interface FeishuPostContentBlock {
+  tag?: string;
+  text?: string;
+  [key: string]: unknown;
+}
+
+interface FeishuPostLocaleContent {
+  title?: string;
+  content?: FeishuPostContentBlock[][];
+  [key: string]: unknown;
+}
+
+const FEISHU_POST_LOCALE_PRIORITY = ['zh_cn', 'en_us', 'ja_jp'] as const;
+
+/**
+ * 判断一个值是否为可安全读取字段的普通对象。
+ *
+ * @param value - 待判断的值
+ * @returns 是否为非空对象
+ */
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value != null && typeof value === 'object';
+}
+
+/**
+ * 收集飞书 `post` 内容体，兼容 flat 与多 locale 包裹两种结构。
+ *
+ * @param parsed - 已解析的 JSON 对象
+ * @returns 需要处理的 post body 列表
+ */
+function collectPostContents(parsed: Record<string, unknown>): FeishuPostLocaleContent[] {
+  if ('title' in parsed || 'content' in parsed) {
+    return [parsed as FeishuPostLocaleContent];
+  }
+
+  const bodies: FeishuPostLocaleContent[] = [];
+  const seen = new Set<FeishuPostLocaleContent>();
+
+  for (const locale of FEISHU_POST_LOCALE_PRIORITY) {
+    const localeContent = parsed[locale];
+    if (!isRecord(localeContent)) {
+      continue;
+    }
+
+    const body = localeContent as FeishuPostLocaleContent;
+    if (!seen.has(body)) {
+      bodies.push(body);
+      seen.add(body);
+    }
+  }
+
+  for (const value of Object.values(parsed)) {
+    if (!isRecord(value)) {
+      continue;
+    }
+
+    const body = value as FeishuPostLocaleContent;
+    if (!seen.has(body)) {
+      bodies.push(body);
+      seen.add(body);
+    }
+  }
+
+  return bodies;
+}
+
+/**
+ * 将 markdown 表格转换为飞书 `post` 消息可渲染的列表格式。
+ *
+ * 这里复用频道运行时已经存在的转换器，确保工具链路与主回复链路的行为一致。
+ *
+ * @param cfg - 当前工具配置
+ * @param text - 原始 markdown 文本
+ * @returns 转换后的文本，若运行时不可用则回退原文
+ */
+function convertMarkdownTablesForLark(cfg: ClawdbotConfig, text: string): string {
+  try {
+    const runtime = LarkClient.runtime;
+    if (runtime?.channel?.text?.convertMarkdownTables && runtime.channel.text.resolveMarkdownTableMode) {
+      const tableMode = runtime.channel.text.resolveMarkdownTableMode({
+        cfg,
+        channel: 'feishu',
+      });
+      return runtime.channel.text.convertMarkdownTables(text, tableMode);
+    }
+  } catch {
+    // 运行时转换器不可用时保持原样，避免影响其他消息发送。
+  }
+
+  return text;
+}
+
+/**
+ * 仅在 `post` 消息里处理 `tag="md"` 的文本节点，让工具发送路径也支持 markdown 表格渲染。
+ *
+ * @param cfg - 当前工具配置
+ * @param msgType - 飞书消息类型
+ * @param content - 工具入参里的 JSON 字符串
+ * @returns 预处理后的 JSON 字符串
+ */
+function preprocessPostContent(cfg: ClawdbotConfig, msgType: string, content: string): string {
+  if (msgType !== 'post') {
+    return content;
+  }
+
+  try {
+    const parsed = JSON.parse(content) as unknown;
+    if (!isRecord(parsed)) {
+      return content;
+    }
+
+    const postContents = collectPostContents(parsed);
+    if (postContents.length === 0) {
+      return content;
+    }
+
+    let changed = false;
+
+    for (const postContent of postContents) {
+      if (!postContent.content || !Array.isArray(postContent.content)) {
+        continue;
+      }
+
+      for (const line of postContent.content) {
+        if (!Array.isArray(line)) {
+          continue;
+        }
+
+        for (const block of line) {
+          if (!isRecord(block) || block.tag !== 'md' || typeof block.text !== 'string') {
+            continue;
+          }
+
+          const convertedText = convertMarkdownTablesForLark(cfg, block.text);
+          if (convertedText !== block.text) {
+            block.text = convertedText;
+            changed = true;
+          }
+        }
+      }
+    }
+
+    return changed ? JSON.stringify(parsed) : content;
+  } catch {
+    return content;
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Schema
@@ -161,6 +311,8 @@ export function registerFeishuImUserMessageTool(api: OpenClawPluginApi) {
               log.info(
                 `send: receive_id_type=${p.receive_id_type}, receive_id=${p.receive_id}, msg_type=${p.msg_type}`,
               );
+              const accountScopedCfg = createAccountScopedConfig(cfg, client.account.accountId);
+              const processedContent = preprocessPostContent(accountScopedCfg, p.msg_type, p.content);
 
               const res = await client.invoke(
                 'feishu_im_user_message.send',
@@ -171,7 +323,7 @@ export function registerFeishuImUserMessageTool(api: OpenClawPluginApi) {
                       data: {
                         receive_id: p.receive_id,
                         msg_type: p.msg_type,
-                        content: p.content,
+                        content: processedContent,
                         uuid: p.uuid,
                       },
                     },
@@ -201,6 +353,8 @@ export function registerFeishuImUserMessageTool(api: OpenClawPluginApi) {
               log.info(
                 `reply: message_id=${p.message_id}, msg_type=${p.msg_type}, reply_in_thread=${p.reply_in_thread ?? false}`,
               );
+              const accountScopedCfg = createAccountScopedConfig(cfg, client.account.accountId);
+              const processedContent = preprocessPostContent(accountScopedCfg, p.msg_type, p.content);
 
               const res = await client.invoke(
                 'feishu_im_user_message.reply',
@@ -209,7 +363,7 @@ export function registerFeishuImUserMessageTool(api: OpenClawPluginApi) {
                     {
                       path: { message_id: p.message_id },
                       data: {
-                        content: p.content,
+                        content: processedContent,
                         msg_type: p.msg_type,
                         reply_in_thread: p.reply_in_thread,
                         uuid: p.uuid,
