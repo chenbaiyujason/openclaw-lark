@@ -20,6 +20,7 @@ import { getUserNameCache } from './user-name-cache';
 import { getLarkAccount } from '../../core/accounts';
 import { LarkClient } from '../../core/lark-client';
 import { larkLogger } from '../../core/lark-logger';
+import { getChatInfo } from '../../core/chat-info-cache';
 import { fetchCardContent, createFetchSubMessages, createParseResolveNames } from './parse-io';
 
 const log = larkLogger('inbound/parse');
@@ -109,6 +110,21 @@ export async function parseMessageEvent(
 
   const createTimeStr = event.message.create_time;
   const createTime = createTimeStr ? parseInt(createTimeStr, 10) : undefined;
+  const chatInfo =
+    event.message.chat_type === 'group' && expandCtx
+      ? await getChatInfo({
+          cfg: expandCtx.cfg,
+          chatId: event.message.chat_id,
+          accountId: acctId,
+        })
+      : undefined;
+  /**
+   * 统一飞书 thread 语义。
+   *
+   * 目前官方事件里真正能稳定标识话题的仍然是 `thread_id`，这里提前产出
+   * `effectiveThreadId`，让后续路由、历史和出站都只依赖这一份归一化结果。
+   */
+  const effectiveThreadId = event.message.thread_id || undefined;
 
   return {
     chatId: event.message.chat_id,
@@ -118,6 +134,9 @@ export async function parseMessageEvent(
     rootId: event.message.root_id || undefined,
     parentId: event.message.parent_id || undefined,
     threadId: event.message.thread_id || undefined,
+    effectiveThreadId,
+    chatMode: chatInfo?.chatMode,
+    groupMessageType: chatInfo?.groupMessageType,
     content,
     contentType: event.message.message_type,
     resources,

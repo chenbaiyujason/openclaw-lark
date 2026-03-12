@@ -15,8 +15,14 @@ import type { MessageContext } from '../types';
 import type { LarkAccount } from '../../core/types';
 import { LarkClient } from '../../core/lark-client';
 import { larkLogger } from '../../core/lark-logger';
+import {
+  buildFeishuConversationId,
+  resolveAgentIdFromSessionKeyLocal,
+  resolveFeishuThreadBinding,
+  touchFeishuThreadBinding,
+} from '../../channel/thread-bindings';
 
-const log = larkLogger('inbound/dispatch-context');
+const logger = larkLogger('inbound/dispatch-context');
 
 // ---------------------------------------------------------------------------
 // DispatchContext type
@@ -38,6 +44,7 @@ export interface DispatchContext {
   envelopeFrom: string;
   envelopeOptions: ReturnType<typeof LarkClient.runtime.channel.reply.resolveEnvelopeFormatOptions>;
   route: ReturnType<typeof LarkClient.runtime.channel.routing.resolveAgentRoute>;
+  boundSessionKey?: string;
   threadSessionKey?: string;
   commandAuthorized?: boolean;
 }
@@ -53,8 +60,8 @@ export interface DispatchContext {
 export function ensureRuntime(runtime: RuntimeEnv | undefined): RuntimeEnv {
   if (runtime) return runtime;
   return {
-    log: (...args: unknown[]) => log.info(args.map(String).join(' ')),
-    error: (...args: unknown[]) => log.error(args.map(String).join(' ')),
+    log: (...args: unknown[]) => logger.info(args.map(String).join(' ')),
+    error: (...args: unknown[]) => logger.error(args.map(String).join(' ')),
     exit: (code: number) => process.exit(code) as never,
   };
 }
@@ -80,7 +87,8 @@ export function buildDispatchContext(params: {
   const log = runtime.log;
   const error = runtime.error;
   const isGroup = ctx.chatType === 'group';
-  const isThread = isGroup && Boolean(ctx.threadId);
+  const effectiveThreadId = ctx.effectiveThreadId ?? ctx.threadId;
+  const isThread = isGroup && Boolean(effectiveThreadId);
   const core = LarkClient.runtime;
 
   const feishuFrom = `feishu:${ctx.senderId}`;
@@ -110,14 +118,45 @@ export function buildDispatchContext(params: {
   if (ctx.parentId) tags.push(`reply_to:${ctx.parentId}`);
   if (ctx.contentType !== 'text') tags.push(ctx.contentType);
   if (ctx.mentions.some((m) => m.isBot)) tags.push('@bot');
-  if (ctx.threadId) tags.push(`thread:${ctx.threadId}`);
+  if (effectiveThreadId) tags.push(`thread:${effectiveThreadId}`);
+  if (ctx.chatMode) tags.push(`chat_mode:${ctx.chatMode}`);
+  if (ctx.groupMessageType) tags.push(`group_message_type:${ctx.groupMessageType}`);
   if (ctx.resources.length > 0) {
     tags.push(`${ctx.resources.length} attachment(s)`);
+  }
+
+  let boundSessionKey: string | undefined;
+  let effectiveRoute = route;
+  const threadBindingsEnabled = account.config?.acpThreadBindings !== false;
+  if (threadBindingsEnabled && effectiveThreadId) {
+    const conversationId = buildFeishuConversationId({
+      chatId: ctx.chatId,
+      threadId: effectiveThreadId,
+    });
+    const boundThread = resolveFeishuThreadBinding({
+      accountId: account.accountId,
+      conversationId,
+    });
+    const nextBoundSessionKey = boundThread?.targetSessionKey?.trim();
+    if (nextBoundSessionKey) {
+      boundSessionKey = nextBoundSessionKey;
+      effectiveRoute = {
+        ...route,
+        sessionKey: nextBoundSessionKey,
+        agentId: resolveAgentIdFromSessionKeyLocal(nextBoundSessionKey),
+      };
+      touchFeishuThreadBinding({
+        accountId: account.accountId,
+        conversationId,
+      });
+      tags.push(`bound_session:${nextBoundSessionKey}`);
+      logger.info(`routed via local feishu binding ${conversationId} -> ${nextBoundSessionKey}`);
+    }
   }
   const tagStr = tags.length > 0 ? ` [${tags.join(', ')}]` : '';
 
   core.system.enqueueSystemEvent(`Feishu[${account.accountId}] ${location} | ${sender}${tagStr}`, {
-    sessionKey: route.sessionKey,
+    sessionKey: effectiveRoute.sessionKey,
     contextKey: `feishu:message:${ctx.chatId}:${ctx.messageId}`,
   });
 
@@ -135,7 +174,8 @@ export function buildDispatchContext(params: {
     feishuTo,
     envelopeFrom,
     envelopeOptions,
-    route,
+    route: effectiveRoute,
+    boundSessionKey,
     threadSessionKey: undefined,
     commandAuthorized: params.commandAuthorized,
   };

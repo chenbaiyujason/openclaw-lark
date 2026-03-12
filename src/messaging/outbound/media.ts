@@ -28,6 +28,7 @@ import {
   validateLocalMediaRoots,
 } from './media-url-utils';
 import { larkLogger } from '../../core/lark-logger';
+import { resolveFeishuSendTarget } from '../../channel/thread-bindings';
 
 const log = larkLogger('outbound/media');
 
@@ -81,6 +82,8 @@ export interface SendMediaResult {
   messageId: string;
   /** Chat ID where the media was sent. */
   chatId: string;
+  /** 当消息位于话题中时，接口可能返回 thread_id。 */
+  threadId?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -382,6 +385,7 @@ async function sendMediaMessage(params: {
     return {
       messageId: response?.data?.message_id ?? '',
       chatId: response?.data?.chat_id ?? '',
+      threadId: response?.data?.thread_id ?? undefined,
     };
   }
 
@@ -402,6 +406,7 @@ async function sendMediaMessage(params: {
   return {
     messageId: response?.data?.message_id ?? '',
     chatId: response?.data?.chat_id ?? '',
+    threadId: response?.data?.thread_id ?? undefined,
   };
 }
 
@@ -429,11 +434,24 @@ export async function sendImageLark(params: {
   accountId?: string;
 }): Promise<SendMediaResult> {
   const { cfg, to, imageKey, replyToMessageId, replyInThread, accountId } = params;
+  const resolvedTarget = resolveFeishuSendTarget({
+    accountId,
+    rawTarget: to,
+    replyToMessageId,
+    replyInThread,
+  });
   log.info(`sendImageLark: target=${to}, imageKey=${imageKey}`);
 
   const client = LarkClient.fromCfg(cfg, accountId).sdk;
   const content = JSON.stringify({ image_key: imageKey });
-  return sendMediaMessage({ client, to, content, msgType: 'image', replyToMessageId, replyInThread });
+  return sendMediaMessage({
+    client,
+    to: resolvedTarget.target,
+    content,
+    msgType: 'image',
+    replyToMessageId: resolvedTarget.replyToMessageId,
+    replyInThread: resolvedTarget.replyInThread,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -460,11 +478,24 @@ export async function sendFileLark(params: {
   accountId?: string;
 }): Promise<SendMediaResult> {
   const { cfg, to, fileKey, replyToMessageId, replyInThread, accountId } = params;
+  const resolvedTarget = resolveFeishuSendTarget({
+    accountId,
+    rawTarget: to,
+    replyToMessageId,
+    replyInThread,
+  });
   log.info(`sendFileLark: target=${to}, fileKey=${fileKey}`);
 
   const client = LarkClient.fromCfg(cfg, accountId).sdk;
   const content = JSON.stringify({ file_key: fileKey });
-  return sendMediaMessage({ client, to, content, msgType: 'file', replyToMessageId, replyInThread });
+  return sendMediaMessage({
+    client,
+    to: resolvedTarget.target,
+    content,
+    msgType: 'file',
+    replyToMessageId: resolvedTarget.replyToMessageId,
+    replyInThread: resolvedTarget.replyInThread,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -494,11 +525,24 @@ export async function sendVideoLark(params: {
   accountId?: string;
 }): Promise<SendMediaResult> {
   const { cfg, to, fileKey, replyToMessageId, replyInThread, accountId } = params;
+  const resolvedTarget = resolveFeishuSendTarget({
+    accountId,
+    rawTarget: to,
+    replyToMessageId,
+    replyInThread,
+  });
   log.info(`sendVideoLark: target=${to}, fileKey=${fileKey}`);
 
   const client = LarkClient.fromCfg(cfg, accountId).sdk;
   const content = JSON.stringify({ file_key: fileKey });
-  return sendMediaMessage({ client, to, content, msgType: 'media', replyToMessageId, replyInThread });
+  return sendMediaMessage({
+    client,
+    to: resolvedTarget.target,
+    content,
+    msgType: 'media',
+    replyToMessageId: resolvedTarget.replyToMessageId,
+    replyInThread: resolvedTarget.replyInThread,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -528,11 +572,24 @@ export async function sendAudioLark(params: {
   accountId?: string;
 }): Promise<SendMediaResult> {
   const { cfg, to, fileKey, replyToMessageId, replyInThread, accountId } = params;
+  const resolvedTarget = resolveFeishuSendTarget({
+    accountId,
+    rawTarget: to,
+    replyToMessageId,
+    replyInThread,
+  });
   log.info(`sendAudioLark: target=${to}, fileKey=${fileKey}`);
 
   const client = LarkClient.fromCfg(cfg, accountId).sdk;
   const content = JSON.stringify({ file_key: fileKey });
-  return sendMediaMessage({ client, to, content, msgType: 'audio', replyToMessageId, replyInThread });
+  return sendMediaMessage({
+    client,
+    to: resolvedTarget.target,
+    content,
+    msgType: 'audio',
+    replyToMessageId: resolvedTarget.replyToMessageId,
+    replyInThread: resolvedTarget.replyInThread,
+  });
 }
 
 // ---------------------------------------------------------------------------

@@ -26,6 +26,7 @@ import {
 import { registerCommands } from './src/commands/index';
 import { larkLogger } from './src/core/lark-logger';
 import { emitSecurityWarnings } from './src/core/security-check';
+import { registerFeishuSubagentHooks } from './src/channel/subagent-hooks';
 
 const log = larkLogger('plugin');
 
@@ -106,6 +107,7 @@ const plugin = {
   register(api: OpenClawPluginApi) {
     LarkClient.setRuntime(api.runtime);
     api.registerChannel({ plugin: feishuPlugin });
+    registerFeishuSubagentHooks(api);
 
     // ========================================
 

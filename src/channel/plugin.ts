@@ -30,6 +30,7 @@ import { triggerOnboarding } from '../tools/onboarding-auth';
 import { setAccountEnabled, applyAccountConfig, deleteAccount, collectFeishuSecurityWarnings } from './config-adapter';
 import { larkLogger } from '../core/lark-logger';
 import { FEISHU_CONFIG_JSON_SCHEMA } from '../core/config-schema';
+import { clearFeishuThreadBindings } from './thread-bindings';
 
 const pluginLog = larkLogger('channel/plugin');
 
@@ -325,6 +326,8 @@ export const feishuPlugin: ChannelPlugin<LarkAccount> = {
       const { monitorFeishuProvider } = await import('./monitor.js');
       const account = getLarkAccount(ctx.cfg, ctx.accountId);
       const port = account.config?.webhookPort ?? null;
+      // 每次启动账号时清理旧的本地话题绑定，避免热重载后残留过期 anchor。
+      clearFeishuThreadBindings(ctx.accountId);
       ctx.setStatus({ accountId: ctx.accountId, port });
       ctx.log?.info(`starting feishu[${ctx.accountId}] (mode: ${account.config?.connectionMode ?? 'websocket'})`);
       return monitorFeishuProvider({
@@ -337,6 +340,7 @@ export const feishuPlugin: ChannelPlugin<LarkAccount> = {
 
     stopAccount: async (ctx) => {
       ctx.log?.info(`stopping feishu[${ctx.accountId}]`);
+      clearFeishuThreadBindings(ctx.accountId);
       LarkClient.clearCache(ctx.accountId);
       ctx.log?.info(`stopped feishu[${ctx.accountId}]`);
     },

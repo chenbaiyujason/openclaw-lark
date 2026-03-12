@@ -14,6 +14,7 @@ import { runWithMessageUnavailableGuard } from '../../core/message-unavailable';
 import type { MentionInfo } from '../types';
 import { optimizeMarkdownStyle } from '../../card/markdown-style';
 import { buildMentionedMessage, buildMentionedCardContent } from '../inbound/mention';
+import { resolveFeishuSendTarget } from '../../channel/thread-bindings';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -102,6 +103,12 @@ function convertMarkdownTablesForFeishu(cfg: ClawdbotConfig, text: string, accou
  */
 export async function sendMessageFeishu(params: SendFeishuMessageParams): Promise<FeishuSendResult> {
   const { cfg, to, text, replyToMessageId, mentions, accountId, replyInThread } = params;
+  const resolvedTarget = resolveFeishuSendTarget({
+    accountId,
+    rawTarget: to,
+    replyToMessageId,
+    replyInThread,
+  });
 
   const client = LarkClient.fromCfg(cfg, accountId).sdk;
 
@@ -123,10 +130,10 @@ export async function sendMessageFeishu(params: SendFeishuMessageParams): Promis
     },
   });
 
-  if (replyToMessageId) {
+  if (resolvedTarget.replyToMessageId) {
     // Send as a threaded reply.
     // 规范化 message_id，处理合成 ID（如 "om_xxx:auth-complete"）
-    const normalizedId = normalizeMessageId(replyToMessageId);
+    const normalizedId = normalizeMessageId(resolvedTarget.replyToMessageId);
     const response = await runWithMessageUnavailableGuard({
       messageId: normalizedId,
       operation: 'im.message.reply(post)',
@@ -138,7 +145,7 @@ export async function sendMessageFeishu(params: SendFeishuMessageParams): Promis
           data: {
             content: contentPayload,
             msg_type: 'post',
-            reply_in_thread: replyInThread,
+            reply_in_thread: resolvedTarget.replyInThread,
           },
         }),
     });
@@ -146,11 +153,12 @@ export async function sendMessageFeishu(params: SendFeishuMessageParams): Promis
     return {
       messageId: response?.data?.message_id ?? '',
       chatId: response?.data?.chat_id ?? '',
+      threadId: response?.data?.thread_id ?? undefined,
     };
   }
 
   // Send as a new message.
-  const target = normalizeFeishuTarget(to);
+  const target = normalizeFeishuTarget(resolvedTarget.target);
   if (!target) {
     throw new Error(`[feishu-send] Invalid target: "${to}"`);
   }
@@ -172,6 +180,7 @@ export async function sendMessageFeishu(params: SendFeishuMessageParams): Promis
   return {
     messageId: response?.data?.message_id ?? '',
     chatId: response?.data?.chat_id ?? '',
+    threadId: response?.data?.thread_id ?? undefined,
   };
 }
 
@@ -187,14 +196,20 @@ export async function sendMessageFeishu(params: SendFeishuMessageParams): Promis
  */
 export async function sendCardFeishu(params: SendFeishuCardParams): Promise<FeishuSendResult> {
   const { cfg, to, card, replyToMessageId, accountId, replyInThread } = params;
+  const resolvedTarget = resolveFeishuSendTarget({
+    accountId,
+    rawTarget: to,
+    replyToMessageId,
+    replyInThread,
+  });
 
   const client = LarkClient.fromCfg(cfg, accountId).sdk;
 
   const contentPayload = JSON.stringify(card);
 
-  if (replyToMessageId) {
+  if (resolvedTarget.replyToMessageId) {
     // 规范化 message_id，处理合成 ID（如 "om_xxx:auth-complete"）
-    const normalizedId = normalizeMessageId(replyToMessageId);
+    const normalizedId = normalizeMessageId(resolvedTarget.replyToMessageId);
     const response = await runWithMessageUnavailableGuard({
       messageId: normalizedId,
       operation: 'im.message.reply(interactive)',
@@ -206,7 +221,7 @@ export async function sendCardFeishu(params: SendFeishuCardParams): Promise<Feis
           data: {
             content: contentPayload,
             msg_type: 'interactive',
-            reply_in_thread: replyInThread,
+            reply_in_thread: resolvedTarget.replyInThread,
           },
         }),
     });
@@ -214,10 +229,11 @@ export async function sendCardFeishu(params: SendFeishuCardParams): Promise<Feis
     return {
       messageId: response?.data?.message_id ?? '',
       chatId: response?.data?.chat_id ?? '',
+      threadId: response?.data?.thread_id ?? undefined,
     };
   }
 
-  const target = normalizeFeishuTarget(to);
+  const target = normalizeFeishuTarget(resolvedTarget.target);
   if (!target) {
     throw new Error(`[feishu-send] Invalid target: "${to}"`);
   }
@@ -239,6 +255,7 @@ export async function sendCardFeishu(params: SendFeishuCardParams): Promise<Feis
   return {
     messageId: response?.data?.message_id ?? '',
     chatId: response?.data?.chat_id ?? '',
+    threadId: response?.data?.thread_id ?? undefined,
   };
 }
 

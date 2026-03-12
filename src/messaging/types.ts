@@ -172,7 +172,16 @@ export interface MessageContext {
   // Message relationships
   rootId?: string;
   parentId?: string;
+  /** 原始事件上的 thread_id。 */
   threadId?: string;
+  /** 归一化后的话题 ID，优先用于后续 thread/conversation 语义。 */
+  effectiveThreadId?: string;
+
+  // Chat / thread capability
+  /** 飞书 chat_mode，用于区分普通群、话题群与 p2p。 */
+  chatMode?: 'group' | 'topic' | 'p2p';
+  /** 普通群下的话题模式，thread 表示话题形式群。 */
+  groupMessageType?: 'chat' | 'thread';
 
   // Timing
   createTime?: number;
@@ -208,6 +217,8 @@ export interface FeishuMediaInfo {
 export interface FeishuSendResult {
   messageId: string;
   chatId: string;
+  /** 当回复创建了新话题或消息本身位于话题中时，接口可能返回 thread_id。 */
+  threadId?: string;
   /**
    * Human-readable warning when the send succeeded but with degradation
    * (e.g. media upload failed, fell back to a text link).

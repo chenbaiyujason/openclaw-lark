@@ -182,6 +182,10 @@ export const FeishuAccountConfigSchema = z.object({
   dedup: DedupSchema,
   reactionNotifications: ReactionNotificationModeSchema,
   threadSession: z.boolean().optional(),
+  /** 是否启用 Feishu 侧的话题 session 绑定路由。 */
+  acpThreadBindings: z.boolean().optional(),
+  /** 普通群主线中是否允许自动开话题后再绑定。 */
+  acpThreadBindingsAutoCreate: z.boolean().optional(),
   uat: UATConfigSchema,
 });
 

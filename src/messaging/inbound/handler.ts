@@ -39,6 +39,7 @@ import { checkMessageGate, readFeishuAllowFromStore, type GateResult } from './g
 import { dispatchToAgent } from './dispatch';
 import { resolveFeishuGroupConfig, splitLegacyGroupAllowFrom } from './policy';
 import { threadScopedKey } from '../../channel/chat-queue';
+import { runWithFeishuBindingInboundContext } from '../../channel/thread-bindings';
 
 const logger = larkLogger('inbound/handler');
 
@@ -102,8 +103,18 @@ export async function handleFeishuMessage(params: {
   });
   ctx = enrichedCtx;
 
-  log(`feishu[${account.accountId}]: received message from ${ctx.senderId} in ${ctx.chatId} (${ctx.chatType})`);
-  logger.info(`received from ${ctx.senderId} in ${ctx.chatId} (${ctx.chatType})`);
+  log(
+    `feishu[${account.accountId}]: received message from ${ctx.senderId} in ${ctx.chatId} (${ctx.chatType}) ` +
+      `root=${ctx.rootId ?? 'N/A'} parent=${ctx.parentId ?? 'N/A'} ` +
+      `effectiveThread=${ctx.effectiveThreadId ?? 'N/A'} chatMode=${ctx.chatMode ?? 'N/A'} ` +
+      `groupMessageType=${ctx.groupMessageType ?? 'N/A'}`,
+  );
+  logger.info(
+    `received from ${ctx.senderId} in ${ctx.chatId} (${ctx.chatType}) ` +
+      `root=${ctx.rootId ?? 'N/A'} parent=${ctx.parentId ?? 'N/A'} ` +
+      `effectiveThread=${ctx.effectiveThreadId ?? 'N/A'} chatMode=${ctx.chatMode ?? 'N/A'} ` +
+      `groupMessageType=${ctx.groupMessageType ?? 'N/A'}`,
+  );
 
   const historyLimit = Math.max(
     0,
@@ -120,7 +131,7 @@ export async function handleFeishuMessage(params: {
     }
     // Record history entry if the gate produced one (group no-mention case)
     if (gate.historyEntry && chatHistories) {
-      const historyKey = threadScopedKey(ctx.chatId, ctx.threadId);
+      const historyKey = threadScopedKey(ctx.chatId, ctx.effectiveThreadId ?? ctx.threadId);
       recordPendingHistoryEntryIfEnabled({
         historyMap: chatHistories,
         historyKey,
@@ -204,22 +215,35 @@ export async function handleFeishuMessage(params: {
   // groupConfig and defaultGroupConfig are already resolved above.
 
   try {
-    await dispatchToAgent({
-      ctx,
-      permissionError,
-      mediaPayload: mediaResult.payload,
-      quotedContent,
-      account,
-      accountScopedCfg,
-      runtime,
-      chatHistories,
-      historyLimit,
-      replyToMessageId,
-      commandAuthorized,
-      groupConfig,
-      defaultGroupConfig,
-      skipTyping,
-    });
+    await runWithFeishuBindingInboundContext(
+      {
+        cfg,
+        accountId: account.accountId,
+        chatId: ctx.chatId,
+        messageId: ctx.messageId,
+        rootId: ctx.rootId,
+        parentId: ctx.parentId,
+        threadId: ctx.threadId,
+        effectiveThreadId: ctx.effectiveThreadId,
+      },
+      async () =>
+        await dispatchToAgent({
+          ctx,
+          permissionError,
+          mediaPayload: mediaResult.payload,
+          quotedContent,
+          account,
+          accountScopedCfg,
+          runtime,
+          chatHistories,
+          historyLimit,
+          replyToMessageId,
+          commandAuthorized,
+          groupConfig,
+          defaultGroupConfig,
+          skipTyping,
+        }),
+    );
   } catch (err) {
     error(`feishu[${account.accountId}]: failed to dispatch message: ${String(err)}`);
     logger.error(`dispatch failed: ${String(err)} (elapsed=${ticketElapsed()}ms)`);

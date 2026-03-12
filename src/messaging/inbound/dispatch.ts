@@ -93,7 +93,11 @@ async function dispatchNormalMessage(
 
   // Register the active dispatcher so the monitor abort fast-path can
   // terminate the streaming card before this task completes.
-  const queueKey = buildQueueKey(dc.account.accountId, dc.ctx.chatId, dc.ctx.threadId);
+  const queueKey = buildQueueKey(
+    dc.account.accountId,
+    dc.ctx.chatId,
+    dc.ctx.effectiveThreadId ?? dc.ctx.threadId,
+  );
   registerActiveDispatcher(queueKey, { abortCard, abortController });
 
   const effectiveSessionKey = dc.threadSessionKey ?? dc.route.sessionKey;
@@ -173,10 +177,11 @@ export async function dispatchToAgent(params: {
   const dc = buildDispatchContext(params);
 
   // 1b. Resolve thread session isolation (async: may query group info API)
-  if (dc.isThread && dc.ctx.threadId) {
+  const effectiveThreadId = dc.ctx.effectiveThreadId ?? dc.ctx.threadId;
+  if (dc.isThread && effectiveThreadId) {
     dc.threadSessionKey = await resolveThreadSessionKey({
       account: dc.account,
-      threadId: dc.ctx.threadId,
+      threadId: effectiveThreadId,
       baseSessionKey: dc.route.sessionKey,
     });
   }
@@ -210,7 +215,10 @@ export async function dispatchToAgent(params: {
   // 6. Build InboundHistory for SDK metadata injection (>= 2026.2.10).
   //    The SDK's buildInboundUserContextPrefix renders these as structured
   //    JSON blocks; earlier SDK versions simply ignore unknown fields.
-  const threadHistoryKey = threadScopedKey(dc.ctx.chatId, dc.isThread ? dc.ctx.threadId : undefined);
+  const threadHistoryKey = threadScopedKey(
+    dc.ctx.chatId,
+    dc.isThread ? (dc.ctx.effectiveThreadId ?? dc.ctx.threadId) : undefined,
+  );
   const inboundHistory =
     dc.isGroup && params.chatHistories && params.historyLimit > 0
       ? (params.chatHistories.get(threadHistoryKey) ?? []).map((entry) => ({
@@ -239,7 +247,7 @@ export async function dispatchToAgent(params: {
     extraFields: {
       ...params.mediaPayload,
       ...(groupSystemPrompt ? { GroupSystemPrompt: groupSystemPrompt } : {}),
-      ...(dc.ctx.threadId ? { MessageThreadId: dc.ctx.threadId } : {}),
+      ...(effectiveThreadId ? { MessageThreadId: effectiveThreadId } : {}),
     },
   });
 

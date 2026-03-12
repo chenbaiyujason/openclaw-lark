@@ -17,6 +17,7 @@ import { optimizeMarkdownStyle } from '../../card/markdown-style';
 import { uploadAndSendMediaLark } from './media';
 import { formatLarkError } from '../../core/api-error';
 import { larkLogger } from '../../core/lark-logger';
+import { resolveFeishuSendTarget } from '../../channel/thread-bindings';
 
 const log = larkLogger('outbound/deliver');
 
@@ -102,6 +103,7 @@ async function sendImMessage(params: {
     const result: FeishuSendResult = {
       messageId: response?.data?.message_id ?? '',
       chatId: response?.data?.chat_id ?? '',
+      threadId: response?.data?.thread_id ?? undefined,
     };
     log.debug(`reply sent: messageId=${result.messageId}`);
     return result;
@@ -127,6 +129,7 @@ async function sendImMessage(params: {
   const result: FeishuSendResult = {
     messageId: response?.data?.message_id ?? '',
     chatId: response?.data?.chat_id ?? '',
+    threadId: response?.data?.thread_id ?? undefined,
   };
   log.debug(`message created: messageId=${result.messageId}`);
   return result;
@@ -238,6 +241,12 @@ export interface SendTextLarkParams {
  */
 export async function sendTextLark(params: SendTextLarkParams): Promise<FeishuSendResult> {
   const { cfg, to, text, replyToMessageId, replyInThread, accountId } = params;
+  const resolvedTarget = resolveFeishuSendTarget({
+    accountId,
+    rawTarget: to,
+    replyToMessageId,
+    replyInThread,
+  });
 
   // Detect card JSON in text — route to card sending before text preprocessing.
   const card = detectCardJson(text);
@@ -252,7 +261,14 @@ export async function sendTextLark(params: SendTextLarkParams): Promise<FeishuSe
   const processedText = prepareTextForLark(cfg, text, accountId);
   const content = buildPostContent(processedText);
 
-  return sendImMessage({ client, to, content, msgType: 'post', replyToMessageId, replyInThread });
+  return sendImMessage({
+    client,
+    to: resolvedTarget.target,
+    content,
+    msgType: 'post',
+    replyToMessageId: resolvedTarget.replyToMessageId,
+    replyInThread: resolvedTarget.replyInThread,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -322,6 +338,12 @@ export interface SendCardLarkParams {
  */
 export async function sendCardLark(params: SendCardLarkParams): Promise<FeishuSendResult> {
   const { cfg, to, card, replyToMessageId, replyInThread, accountId } = params;
+  const resolvedTarget = resolveFeishuSendTarget({
+    accountId,
+    rawTarget: to,
+    replyToMessageId,
+    replyInThread,
+  });
 
   const version = card.schema === '2.0' ? 'v2' : 'v1';
   log.info(`sendCardLark: target=${to}, cardVersion=${version}`);
@@ -330,7 +352,14 @@ export async function sendCardLark(params: SendCardLarkParams): Promise<FeishuSe
   const content = JSON.stringify(card);
 
   try {
-    return await sendImMessage({ client, to, content, msgType: 'interactive', replyToMessageId, replyInThread });
+    return await sendImMessage({
+      client,
+      to: resolvedTarget.target,
+      content,
+      msgType: 'interactive',
+      replyToMessageId: resolvedTarget.replyToMessageId,
+      replyInThread: resolvedTarget.replyInThread,
+    });
   } catch (err) {
     const detail = formatLarkError(err);
     log.error(`sendCardLark failed: ${detail}`);
@@ -395,21 +424,27 @@ export interface SendMediaLarkParams {
  */
 export async function sendMediaLark(params: SendMediaLarkParams): Promise<FeishuSendResult> {
   const { cfg, to, mediaUrl, replyToMessageId, replyInThread, accountId, mediaLocalRoots } = params;
+  const resolvedTarget = resolveFeishuSendTarget({
+    accountId,
+    rawTarget: to,
+    replyToMessageId,
+    replyInThread,
+  });
 
   log.info(`sendMediaLark: target=${to}, mediaUrl=${mediaUrl}`);
 
   try {
     const result = await uploadAndSendMediaLark({
       cfg,
-      to,
+      to: resolvedTarget.target,
       mediaUrl,
-      replyToMessageId,
-      replyInThread,
+      replyToMessageId: resolvedTarget.replyToMessageId,
+      replyInThread: resolvedTarget.replyInThread,
       accountId,
       mediaLocalRoots,
     });
     log.info(`media sent: messageId=${result.messageId}`);
-    return { messageId: result.messageId, chatId: result.chatId };
+    return { messageId: result.messageId, chatId: result.chatId, threadId: result.threadId };
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err);
     log.error(`sendMediaLark failed for "${mediaUrl}": ${errMsg}`);
@@ -418,10 +453,10 @@ export async function sendMediaLark(params: SendMediaLarkParams): Promise<Feishu
     log.info(`falling back to text link for "${mediaUrl}"`);
     const fallbackResult = await sendTextLark({
       cfg,
-      to,
+      to: resolvedTarget.target,
       text: `\u{1F4CE} ${mediaUrl}`,
-      replyToMessageId,
-      replyInThread,
+      replyToMessageId: resolvedTarget.replyToMessageId,
+      replyInThread: resolvedTarget.replyInThread,
       accountId,
     });
 
